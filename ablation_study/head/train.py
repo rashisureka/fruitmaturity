@@ -63,10 +63,10 @@ def get_args():
         f"DeepHS ablation_study {ABLATION_TYPE}:")
     parser.add_argument("--batch_size", type=int, default=32, help="The number of images per batch")
     parser.add_argument("--lr", type=float, default=1e-2)
-    parser.add_argument('--fruit', type=argparser_utils.str2fruit, default=Fruit.AVOCADO)
+    parser.add_argument('--fruit', type=argparser_utils.str2fruit, default=Fruit.MANGO)
     parser.add_argument('--camera_type', type=argparser_utils.str2cameratype, default=CameraType.VIS)
     parser.add_argument('--classification_type', type=argparser_utils.str2classification_type,
-                        default=ClassificationType.FIRMNESS)
+                        default=ClassificationType.RIPENESS)
     parser.add_argument("--num_epochs", type=int, default=5000)
     parser.add_argument("--data_path", type=str, default="", help="the root folder of dataset")
     parser.add_argument("--seed", type=int, default=0)

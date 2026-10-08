@@ -70,15 +70,6 @@ if __name__ == '__main__':
     parser.add_argument("--data_path", type=str, required=True, help="the root folder of dataset")
     opt = parser.parse_args()
 
-    main(ClassificationType.RIPENESS, Fruit.AVOCADO, CameraType.VIS, opt.data_path)
-    main(ClassificationType.RIPENESS, Fruit.AVOCADO, CameraType.NIR, opt.data_path)
-    main(ClassificationType.RIPENESS, Fruit.KIWI, CameraType.VIS, opt.data_path)
-    main(ClassificationType.RIPENESS, Fruit.KIWI, CameraType.NIR, opt.data_path)
-
-    main(ClassificationType.FIRMNESS, Fruit.AVOCADO, CameraType.VIS, opt.data_path)
-    main(ClassificationType.FIRMNESS, Fruit.AVOCADO, CameraType.NIR, opt.data_path)
-    main(ClassificationType.FIRMNESS, Fruit.KIWI, CameraType.VIS, opt.data_path)
-    main(ClassificationType.FIRMNESS, Fruit.KIWI, CameraType.NIR, opt.data_path)
-
-    main(ClassificationType.SUGAR, Fruit.KIWI, CameraType.VIS, opt.data_path)
-    main(ClassificationType.SUGAR, Fruit.KIWI, CameraType.NIR, opt.data_path)
+    # mango ripeness only (mango was recorded with VIS and VIS_COR, there is no NIR recording)
+    main(ClassificationType.RIPENESS, Fruit.MANGO, CameraType.VIS, opt.data_path)
+    main(ClassificationType.RIPENESS, Fruit.MANGO, CameraType.VIS_COR, opt.data_path)

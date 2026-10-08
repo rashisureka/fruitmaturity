@@ -5,6 +5,7 @@ from core.name_convention import *
 from core.measurements import *
 import core.util as util
 import core.fruit_list as fruit_list
+import core.mango_config as mango_config
 import cv2
 import numpy as np
 import copy
@@ -206,49 +207,41 @@ def extend_too_unsweet_recordings(records: [FruitRecord]):
 
     return records
 
-def get_records(fruit, camera_type, classification_type,
+def get_records(fruit=mango_config.TARGET_FRUIT, camera_type=mango_config.DEFAULT_CAMERA_TYPE,
+                classification_type=mango_config.TARGET_CLASSIFICATION_TYPE,
                 extend_by_time_assumption=False, use_inter_ripeness_levels=False, allow_all_fruit_types=True,
                 use_new_recordings=True
                ):
+    """
+        Mango-only ripeness records split into train / val / test.
+
+        Only fruit=MANGO and classification_type=RIPENESS are accepted. All other
+        fruit (avocado, kiwi, papaya, persimmon/kaki) are filtered out of the
+        measurement list before any labels are extended or splits are built.
+        `allow_all_fruit_types` is kept for API compatibility but has no effect.
+    """
+    mango_config.validate_task(fruit, classification_type, camera_type)
 
     full_set = all_fruits_new if use_new_recordings else all_fruits
 
-    if fruit == Fruit.ALL and not allow_all_fruit_types:
-        raise NotImplementedError("ALL fruit types is not supported for this classifier!")
-
+    # ignore every non-mango recording
     records = fruit_list.get_for_camera_type(fruit_list.get_for_fruit(
-        full_set, fruit), camera_type)
+        full_set, mango_config.TARGET_FRUIT), camera_type)
 
-    assert len(records) > 0
+    assert len(records) > 0, f"No mango recordings found for camera {camera_type.value}"
 
     if extend_by_time_assumption:
-        if classification_type == ClassificationType.RIPENESS:
-            records = extend_unripe_recordings(records)
-        elif classification_type == ClassificationType.FIRMNESS:
-            records = extend_too_firm_recordings(records)
-        elif classification_type == ClassificationType.SUGAR:
-            records = extend_too_unsweet_recordings(records)
+        records = extend_unripe_recordings(records)
 
     records = fruit_list.get_labeled_fruits(records)
 
     if use_inter_ripeness_levels:
         records = merge_ripeness_levels(records)
 
-    if classification_type == ClassificationType.RIPENESS:
-        records = np.concatenate((fruit_list.get_fruits_with_state(records, RipenessState.UNRIPE),
-                                  fruit_list.get_fruits_with_state(
-                                      records, RipenessState.PERFECT),
-                                  fruit_list.get_fruits_with_state(records, RipenessState.OVERRIPE)))
-    if classification_type == ClassificationType.FIRMNESS:
-        records = np.concatenate((fruit_list.get_fruits_with_firmness_level(records, FirmnessLevel.TOO_SOFT),
-                                  fruit_list.get_fruits_with_firmness_level(
-                                      records, FirmnessLevel.READY),
-                                  fruit_list.get_fruits_with_firmness_level(records, FirmnessLevel.TOO_HARD)))
-    if classification_type == ClassificationType.SUGAR:
-        records = np.concatenate((fruit_list.get_fruits_with_sugar_level(records, SugarLevel.NOT_SWEET),
-                                  fruit_list.get_fruits_with_sugar_level(
-                                      records, SugarLevel.READY),
-                                  fruit_list.get_fruits_with_sugar_level(records, SugarLevel.TOO_SWEET)))
+    records = np.concatenate((fruit_list.get_fruits_with_state(records, RipenessState.UNRIPE),
+                              fruit_list.get_fruits_with_state(
+                                  records, RipenessState.PERFECT),
+                              fruit_list.get_fruits_with_state(records, RipenessState.OVERRIPE)))
 
     rest_records, test_records = fruit_list.extract_test_data(records)
     train_records, val_records = fruit_list.extract_val_data(rest_records)
@@ -265,8 +258,10 @@ def add_border(_obj):
 
 def prepare_fruit(_f: FruitRecord, data_path: str, input_size):
     _header, _data = _f.load(data_path, is_already_referenced=True)
-    _data = cv2.resize(_data, dsize=input_size, interpolation=cv2.INTER_CUBIC)
     _data = np.array(_data)
+    if _data.shape[:2] != input_size:
+        # Fallback to cv2 if needed, though OpenCV 5 fails on 224-channel images
+        _data = cv2.resize(_data, dsize=input_size, interpolation=cv2.INTER_CUBIC)
 #    _data = add_border(_data)
 
     return bands_as_first_dimension(_data)

@@ -1,5 +1,27 @@
 # Measuring the Ripeness of Fruit with Hyperspectral Imaging and Deep Learning
 
+> **Mango ripeness fork**
+>
+> This copy of `deephs_fruit` is configured for a single task: **mango ripeness classification**
+> (`fruit=mango`, `classification_type=ripeness`, 3 classes: Unripe / Ripe / Overripe).
+> Avocado, kiwi, papaya and persimmon (kaki) as well as the firmness/sugar targets are ignored.
+> The central settings live in [`core/mango_config.py`](core/mango_config.py) and are enforced in
+> `get_records()` ([`core/datasets/hyperspectral_dataset.py`](core/datasets/hyperspectral_dataset.py)).
+>
+> Mango was recorded in measurement series 3 with **VIS** (Specim FX10, default) and **VIS_COR**
+> (Corning microHSI 410) only. There are no NIR recordings of mango.
+> The fixed train/val/test split gives 380 / 12 / 12 samples per camera.
+>
+> Train DeepHS-Net (HS-CNN):
+>
+>     PYTHONPATH=$PYTHONPATH:. python3 classification/train.py --data_path /folder/of/downloaded/dataset/ --model deephs_net --fruit mango --classification_type ripeness --camera_type vis --seed 23312323
+>
+> Train DeepHS-Net + HyveConv++:
+>
+>     PYTHONPATH=$PYTHONPATH:. python3 classification/train.py --data_path /folder/of/downloaded/dataset/ --model hyve --fruit mango --classification_type ripeness --camera_type vis --seed 23312323
+>
+> On Windows PowerShell set `$env:PYTHONPATH="."` first. `--fruit` and `--classification_type` default to mango/ripeness, so you can leave them out.
+
     Version 2:
         - The training is now more stable
         - Added new hyperspectral recordings

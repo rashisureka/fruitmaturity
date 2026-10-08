@@ -1,4 +1,7 @@
 import argparse
+import sys
+import importlib
+sys.modules['imp'] = importlib
 
 import pytorch_lightning as lightning
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -25,6 +28,7 @@ from core.run_utils import (
     get_wandb_log_dir,
 )
 import core.util as util
+import core.mango_config as mango_config
 
 AUGMENTATION_CONFIG_TRAIN = {
     'random_flip': True,
@@ -54,6 +58,7 @@ class DeepHsModule(lightning.LightningModule):
         self.is_camera_agnostic = self.hparams['model'] in CAMERA_AGNOSTIC_MODELS
         self.train_records, self.val_records, self.test_records = None, None, None
         self.train_dataset, self.val_dataset, self.test_dataset = None, None, None
+        self.test_step_outputs = []
 
     def setup(self, stage: str):
         self.train_records, self.val_records, self.test_records = \
@@ -176,7 +181,7 @@ class DeepHsModule(lightning.LightningModule):
 
         return conv
 
-    def validation_epoch_end(self, outputs):
+    def on_validation_epoch_end(self):
         if self.is_camera_agnostic and self.trainer.is_global_zero:
             conv = self._get_hyve_conv()
 
@@ -244,21 +249,34 @@ class DeepHsModule(lightning.LightningModule):
         loss = self.critertion(pred, y)
         accuracy = ((pred.argmax(1) == y).sum().float() / x.shape[0]).detach()
 
-        return {
+        out = {
             'test_loss': loss,
             'test_accuracy': accuracy,
             'test_ys': torch.stack(
                 [torch.tensor([y_pred, y_true]) for y_pred, y_true in zip(pred.argmax(1), y)])
         }
+        self.test_step_outputs.append(out)
+        return out
 
-    def test_epoch_end(self, outputs):
-        outputs = self.all_gather(outputs)
+    def on_test_epoch_end(self):
+        outputs = self.test_step_outputs
+        
+        # Test step output gathering is already done by Lightning if returned, but wait...
+        # If we use DDP, we might need to all_gather. Since we use CPU/Auto without DDP, we can just process.
+        
+        # We need to manually all_gather in Lightning 2.0+ if using DDP, but we are just collecting
+        outputs = self.all_gather(outputs) if hasattr(self, 'all_gather') and len(outputs) > 0 and isinstance(outputs[0], dict) else outputs
+
+        if len(outputs) == 0:
+            return
+
         test_accuracy = torch.stack([o['test_accuracy']
                                      for o in outputs]).mean()
         test_loss = torch.stack([o['test_loss']
                                  for o in outputs]).mean()
         test_ys = torch.cat([o['test_ys']
                              for o in outputs]).reshape(-1, 2).cpu().numpy()
+        self.test_step_outputs.clear()
 
         # log only in the first worker
         if self.trainer.is_global_zero:
@@ -267,13 +285,8 @@ class DeepHsModule(lightning.LightningModule):
             self.log('test/loss',
                      test_loss, rank_zero_only=True)
 
-            labels = []
-            if self.hparams['classification_type'] == ClassificationType.RIPENESS:
-                labels = ["Unripe", "Ripe", "Overripe"]
-            elif self.hparams['classification_type'] == ClassificationType.FIRMNESS:
-                labels = ["Too hard", "Perfect", "Too soft"]
-            elif self.hparams['classification_type'] == ClassificationType.SUGAR:
-                labels = ["Not sweet", "Perfect", "Too sweet"]
+            # mango ripeness only: Unripe / Ripe / Overripe
+            labels = mango_config.RIPENESS_CLASS_NAMES
 
             log_confusion_matrix(
                 self.logger, test_ys[:, 0], test_ys[:, 1], labels=labels)
@@ -309,13 +322,17 @@ def get_parser():
     parser.add_argument("--batch_size", type=int, default=64,
                         help="The number of images per batch")
     parser.add_argument("--lr", type=float, default=1e-2)
+    # This pipeline is restricted to mango ripeness classification (see core/mango_config.py)
     parser.add_argument(
-        '--fruit', type=argparser_utils.str2fruit, default=Fruit.AVOCADO,
-        choices=Fruit)
+        '--fruit', type=argparser_utils.str2fruit, default=mango_config.TARGET_FRUIT,
+        choices=[mango_config.TARGET_FRUIT])
     parser.add_argument(
-        '--camera_type', type=argparser_utils.str2cameratype, default=CameraType.VIS)
+        '--camera_type', type=argparser_utils.str2cameratype, default=mango_config.DEFAULT_CAMERA_TYPE,
+        choices=list(mango_config.SUPPORTED_CAMERA_TYPES),
+        help="Mango was recorded with VIS (Specim FX10) and VIS_COR (Corning microHSI 410) only")
     parser.add_argument('--classification_type', type=argparser_utils.str2classification_type,
-                        default=ClassificationType.FIRMNESS)
+                        default=mango_config.TARGET_CLASSIFICATION_TYPE,
+                        choices=[mango_config.TARGET_CLASSIFICATION_TYPE])
     parser.add_argument("--num_epochs", type=int, default=5000)
     parser.add_argument("--data_path", type=str, required=True,
                         help="the root folder of dataset")
@@ -335,9 +352,7 @@ def get_parser():
 def get_args(parser_generator=get_parser):
     args = parser_generator().parse_args()
 
-    if args.fruit == Fruit.AVOCADO and args.classification_type == ClassificationType.SUGAR:
-        print("! Avocados have no sugar label!")
-        exit(0)
+    mango_config.validate_task(args.fruit, args.classification_type, args.camera_type)
 
     args.hidden_layers = [25, 30, 50]
 
@@ -357,7 +372,7 @@ def main(hparams):
     hparams['test_augmentation'] = True
     hparams['tta_augmentation_config'] = AUGMENTATION_CONFIG_TTA
     hparams['tta_augmentation_iterations'] = 5
-    hparams['num_classes'] = 3
+    hparams['num_classes'] = mango_config.NUM_CLASSES
     hparams['input_size'] = (64, 64)
 
     print("Hparams: %s" % hparams)
@@ -383,10 +398,9 @@ def main(hparams):
     )
 
     trainer = lightning.Trainer(max_epochs=opt.num_epochs,
-                                accelerator='gpu',
-                                devices=-1,
+                                accelerator='auto',
+                                devices='auto',
                                 logger=logger,
-                                strategy='ddp',
                                 min_epochs=50,
                                 callbacks=[LRLoggingCallback(),
                                            early_stop_callback,
@@ -412,7 +426,7 @@ if __name__ == "__main__":
 
     # fix the seed for reproducibility
     seed = opt.seed
-    lightning.utilities.seed.seed_everything(seed)
+    lightning.seed_everything(seed)
 
     if get_wandb_log_dir() is not None:
         opt.log_path = get_wandb_log_dir()
